@@ -269,11 +269,16 @@ export class DiscordClient extends EventEmitter {
     const agentId = getUuid(settings.DISCORD_APPLICATION_ID as string) as UUID;
     const room_id = getUuid(this.client.user?.id as string) as UUID;
 
-// Removed unnecessary ensureUserExists, ensureRoomExists, and ensureParticipantInRoom method calls
+    await this.ensureUserExists(
+      agentId,
+      await this.fetchBotName(settings.DISCORD_API_TOKEN)
+    );
+    await this.ensureRoomExists(room_id);
+    await this.ensureParticipantInRoom(agentId, room_id);
 
-const botData = adapter.db
-  .prepare("SELECT name FROM accounts WHERE id = ?")
-  .get(agentId) as { name: string };
+    const botData = adapter.db
+      .prepare("SELECT name FROM accounts WHERE id = ?")
+      .get(agentId) as { name: string };
 
     if (!botData.name) {
       const botName = await this.fetchBotName(settings.DISCORD_API_TOKEN);
@@ -283,86 +288,86 @@ const botData = adapter.db
     }
   }
 
-  async handleMessage({
-    message,
-    hasInterest = true,
-    shouldIgnore = false,
-    shouldRespond = true,
-    callback,
-    state,
-    interestChannels,
-    discordClient,
-    discordMessage,
-  }: {
-    message: Message;
-    hasInterest?: boolean;
-    shouldIgnore?: boolean;
-    shouldRespond?: boolean;
-    callback: (response: string) => void;
-    state?: State;
-    interestChannels?: InterestChannels;
-    discordClient: Client;
-    discordMessage: DiscordMessage;
-  }) {
-    if (!message.content.content) {
-      return { content: "", action: "IGNORE" };
-    }
-    if (!state) {
-      state = await this.agent.runtime.composeState(message, {
-        discordClient,
-        discordMessage,
-      });
-    }
-
-    await this._saveRequestMessage(message, state);
-
-    if (shouldIgnore) {
-      console.log("shouldIgnore", shouldIgnore);
-      return { content: "", action: "IGNORE" };
-    }
-
-    const nickname = this.client.user?.displayName;
+async handleMessage({
+  message,
+  hasInterest = true,
+  shouldIgnore = false,
+  shouldRespond = true,
+  callback,
+  state,
+  interestChannels,
+  discordClient,
+  discordMessage,
+}: {
+  message: Message;
+  hasInterest?: boolean;
+  shouldIgnore?: boolean;
+  shouldRespond?: boolean;
+  callback: (response: string) => void;
+  state?: State;
+  interestChannels?: InterestChannels;
+  discordClient: Client;
+  discordMessage: DiscordMessage;
+}) {
+  if (!message.content.content) {
+    return { content: "", action: "IGNORE" };
+  }
+  if (!state) {
     state = await this.agent.runtime.composeState(message, {
       discordClient,
       discordMessage,
-      agentName: nickname,
     });
-
-    if (!shouldRespond && hasInterest) {
-      shouldRespond = await this._checkShouldRespond(state, interestChannels, discordMessage);
-    }
-
-    if (!shouldRespond) {
-      console.log("Not responding to message");
-      return { content: "", action: "IGNORE" };
-    }
-
-    if (!nickname) {
-      console.log("No nickname found for bot");
-    }
-
-    const context = composeContext({
-      state,
-      template: messageHandlerTemplate,
-    });
-
-    if (this.agent.runtime.debugMode) {
-      console.log(context, "Response Context");
-    }
-
-    const responseContent = await this._generateResponse(message, state, context);
-
-    await this._saveResponseMessage(message, state, responseContent);
-    this.agent.runtime
-      .processActions(message, responseContent, state)
-      .then((response: unknown) => {
-        if (response && (response as Content).content) {
-          callback((response as Content).content);
-        }
-      });
-
-    return responseContent;
   }
+
+  await this._saveRequestMessage(message, state);
+
+  if (shouldIgnore) {
+    console.log("shouldIgnore", shouldIgnore);
+    return { content: "", action: "IGNORE" };
+  }
+
+  const nickname = this.client.user?.username;
+  state = await this.agent.runtime.composeState(message, {
+    discordClient,
+    discordMessage,
+    agentName: nickname,
+  });
+
+  if (!shouldRespond && hasInterest) {
+    shouldRespond = await this._checkShouldRespond(state, interestChannels, discordMessage);
+  }
+
+  if (!shouldRespond) {
+    console.log("Not responding to message");
+    return { content: "", action: "IGNORE" };
+  }
+
+  if (!nickname) {
+    console.log("No nickname found for bot");
+  }
+
+  const context = composeContext({
+    state,
+    template: messageHandlerTemplate,
+  });
+
+  if (this.agent.runtime.debugMode) {
+    console.log(context, "Response Context");
+  }
+
+  const responseContent = await this._generateResponse(message, state, context);
+
+  await this._saveResponseMessage(message, state, responseContent);
+  this.agent.runtime
+    .processActions(message, responseContent, state)
+    .then((response: unknown) => {
+      if (response && (response as Content).content) {
+        callback((response as Content).content);
+      }
+    });
+
+  return responseContent;
+}
 
   private async _saveRequestMessage(message: Message, state: State) {
     const { content: senderContent } = message;
@@ -605,6 +610,10 @@ const botData = adapter.db
     const userIdUUID = getUuid(user_id) as UUID;
     const agentId = getUuid(settings.DISCORD_APPLICATION_ID as string) as UUID;
 
+    await this.agent.ensureUserExists(agentId, await this.fetchBotName(settings.DISCORD_API_TOKEN));
+    await this.agent.ensureUserExists(userIdUUID, userName);
+    await this.agent.ensureRoomExists(room_id);
+    await this.agent.ensureParticipantInRoom(userIdUUID, room_id);
     await this.agent.ensureParticipantInRoom(agentId, room_id);
 
     const callback = (response: string) => {
@@ -915,14 +924,36 @@ const botData = adapter.db
     if (attachment && attachment.contentType?.startsWith('image/')) {
       try {
         const description = await this.imageRecognitionService.recognizeImage(attachment.url);
-        await message.reply(`Image description: ${description[0]}`);
+        // Add the image description to the completion context
+        message.content += `\nImage description: ${description[0]}`;
       } catch (error) {
         console.error('Error recognizing image:', error);
         await message.reply('Sorry, I encountered an error while processing the image.');
       }
     }
   }
-}
+
+  private async ensureUserExists(userId: UUID, username: string, token?: string): Promise<void> {
+    // Implement user creation logic here
+    // This might involve calling an API or updating a database
+    console.log(`Ensuring user exists: ${username} (${userId})`);
+    // For now, we'll assume the user exists
+  }
+
+  private async ensureRoomExists(roomId: UUID): Promise<void> {
+    // Implement room creation logic here
+    // This might involve calling an API or updating a database
+    console.log(`Ensuring room exists: ${roomId}`);
+    // For now, we'll assume the room exists
+  }
+
+  private async ensureParticipantInRoom(userId: UUID, roomId: UUID): Promise<void> {
+    // Implement logic to add participant to room
+    // This might involve calling an API or updating a database
+    console.log(`Ensuring participant ${userId} is in room ${roomId}`);
+    // For now, we'll assume the participant is added to the room
+  }
 
 // Export the DiscordClient class
+}
 export default DiscordClient;

@@ -16,9 +16,6 @@ import settings from "../../core/settings.ts";
 import { ClientBase, Character } from "./base";
 import ImageRecognitionService from '../../imageRecognitionService';
 
-
-
-
 export const messageHandlerTemplate =
 `{{relevantFacts}}
 {{recentFacts}}
@@ -84,9 +81,8 @@ export class TwitterInteractionClient extends ClientBase {
   private imageRecognitionService: ImageRecognitionService;
   private twitterClient: Scraper;
   private lastCheckedTweetId: string | null;
-  private directions: string;
 
-  constructor(options: { agent: Agent; character: Character; model: string; callback?: (self: ClientBase) => void }) {
+  constructor(options: { agent: Agent; character: Character; model: string; temperature: number; callback?: (self: ClientBase) => void }) {
     super(options);
     this.imageRecognitionService = new ImageRecognitionService();
     if (!('twitterClient' in options.agent)) {
@@ -94,7 +90,6 @@ export class TwitterInteractionClient extends ClientBase {
     }
     this.twitterClient = (options.agent as any).twitterClient as Scraper;
     this.lastCheckedTweetId = null;
-    this.directions = options.character.bio || '';
     this.initializeImageRecognitionService();
   }
 
@@ -106,7 +101,16 @@ export class TwitterInteractionClient extends ClientBase {
     }
   }
 
-  // Implement abstract method from ClientBase
+  async start(): Promise<void> {
+    console.log('Twitter Interaction Client is starting');
+    this.onReady();
+  }
+
+  async stop(): Promise<void> {
+    console.log('Twitter Interaction Client is stopping');
+    // Implement any cleanup logic here
+  }
+
   protected async processMessage(message: Message): Promise<void> {
     if (this.isTweet(message)) {
       await this.handleTweet(message as Tweet);
@@ -126,12 +130,11 @@ export class TwitterInteractionClient extends ClientBase {
   }
 
   private async handleDirectMessage(message: Message): Promise<void> {
-    // Implement direct message handling logic here
     console.log('Handling direct message:', message);
     // TODO: Implement actual direct message handling logic
   }
 
-  onReady(): void {
+  private onReady(): void {
     console.log('Twitter Interaction Client is ready');
     console.log('Checking Twitter interactions');
     const handleTwitterInteractionsLoop = () => {
@@ -198,7 +201,6 @@ export class TwitterInteractionClient extends ClientBase {
     const twitterRoomId = getUuid('twitter') as UUID;
 
     await this.ensureUserExists(twitterUserId, tweet.username);
-
     await this.ensureRoomExists(twitterRoomId);
     await this.ensureParticipantInRoom(twitterUserId, twitterRoomId);
 
@@ -208,11 +210,8 @@ export class TwitterInteractionClient extends ClientBase {
       room_id: twitterRoomId,
     };
 
-    let shouldIgnore = false;
-    let shouldRespond = true;
-
     if (!message.content.content) {
-      return { content: "", action: "IGNORE" };
+      return;
     }
 
     let tweetBackground = '';
@@ -245,7 +244,7 @@ export class TwitterInteractionClient extends ClientBase {
       agentName: botTwitterUsername,
       bio: this.character.bio,
       name: botTwitterUsername,
-      directions: this.directions,
+      directions: this.character.bio || '',
       adjective: this.character.adjectives[Math.floor(Math.random() * this.character.adjectives.length)],
       tweetContext: `
 Tweet Background:
@@ -253,59 +252,29 @@ ${tweetBackground}
 
 Original Tweet:
 By @${tweet.username}
-${tweet.text}${tweet.replies > 0 && `\nReplies to original tweet:\n${replyContext}`}\n${`Original tweet text: ${tweet.text}`}}
+${tweet.text}${tweet.replies > 0 ? `\nReplies to original tweet:\n${replyContext}` : ''}\n${`Original tweet text: ${tweet.text}`}
 ${tweet.urls.length > 0 ? `URLs: ${tweet.urls.join(', ')}\n` : ''}${imageDescriptions.length > 0 ? `\nImages in Tweet (Described): ${imageDescriptions.join(', ')}\n` : ''}
 `
     });
 
-    this.saveRequestMessage(message, state as State);
+    await this.saveRequestMessage(message, state as State);
 
-    if (shouldIgnore) {
-      console.log("shouldIgnore", shouldIgnore);
-      return { content: "", action: "IGNORE" };
-    }
-
-    const nickname = settings.TWITTER_USERNAME;
-
-    state = await this.agent.runtime.composeState(message, {
-      twitterClient: this.twitterClient,
-      twitterMessage: message,
-      agentName: nickname,
+    const shouldRespondContext = composeContext({
+      state,
+      template: shouldRespondTemplate,
     });
 
-    if (!shouldRespond) {
-      const shouldRespondContext = composeContext({
-        state,
-        template: shouldRespondTemplate,
-      });
+    const shouldRespondResponse = await this.agent.runtime.completion({
+      context: shouldRespondContext,
+      stop: [],
+      model: this.model,
+    });
 
-      const response = await this.agent.runtime.completion({
-        context: shouldRespondContext,
-        stop: [],
-        model: this.model,
-      });
+    console.log("*** response from ", botTwitterUsername, ":", shouldRespondResponse);
 
-      console.log("*** response from ", nickname, ":", response);
-
-      if (response.toLowerCase().includes("respond")) {
-        shouldRespond = true;
-      } else if (response.toLowerCase().includes("ignore")) {
-        shouldRespond = false;
-      } else if (response.toLowerCase().includes("stop")) {
-        shouldRespond = false;
-      } else {
-        console.error("Invalid response:", response);
-        shouldRespond = false;
-      }
-    }
-
-    if (!shouldRespond) {
+    if (!shouldRespondResponse.toLowerCase().includes("respond")) {
       console.log("Not responding to message");
-      return { content: "", action: "IGNORE" };
-    }
-
-    if (!nickname) {
-      console.log("No nickname found for bot");
+      return;
     }
 
     const context = composeContext({
@@ -370,17 +339,15 @@ ${tweet.urls.length > 0 ? `URLs: ${tweet.urls.join(', ')}\n` : ''}${imageDescrip
       };
     }
 
-    this.saveResponseMessage(message, state, responseContent);
-    this.agent.runtime.processActions(message, responseContent, state);
+    await this.saveResponseMessage(message, state, responseContent);
+    await this.agent.runtime.processActions(message, responseContent, state);
 
-    const response = responseContent;
-
-    if (response.content) {
-      console.log(`Bot would respond to tweet ${tweet.id} with: ${response.content}`);
+    if (responseContent.content) {
+      console.log(`Bot would respond to tweet ${tweet.id} with: ${responseContent.content}`);
       try {
-        await this.twitterClient.sendTweet(response.content, tweet.id);
+        await this.twitterClient.sendTweet(responseContent.content, tweet.id);
         console.log(`Successfully responded to tweet ${tweet.id}`);
-        const responseInfo = `Context:\n\n${context}\n\nSelected Tweet: ${tweet.id} - ${tweet.username}: ${tweet.text}\nAgent's Output:\n${response.content}`;
+        const responseInfo = `Context:\n\n${context}\n\nSelected Tweet: ${tweet.id} - ${tweet.username}: ${tweet.text}\nAgent's Output:\n${responseContent.content}`;
         const debugFileName = `tweets/tweet_generation_${tweet.id}.txt`;
         fs.writeFileSync(debugFileName, responseInfo);
       } catch (error) {
@@ -389,45 +356,55 @@ ${tweet.urls.length > 0 ? `URLs: ${tweet.urls.join(', ')}\n` : ''}${imageDescrip
     }
   }
 
-  private async describeImage(imageUrl: string): Promise<string> {
-    try {
-      const description = await this.imageRecognitionService.recognizeImage(imageUrl);
-      return description[0] || 'Unable to describe the image.';
-    } catch (error) {
-      console.error('Error describing image:', error);
-      return 'Error occurred while describing the image.';
+  protected async ensureUserExists(userId: UUID, username: string): Promise<void> {
+    console.log(`Ensuring user exists: ${username} (${userId})`);
+    await this.agent.ensureUserExists(userId, username);
+  }
+
+  protected async ensureRoomExists(roomId: UUID): Promise<void> {
+    console.log(`Ensuring room exists: ${roomId}`);
+    await this.agent.ensureRoomExists(roomId);
+  }
+
+  protected async ensureParticipantInRoom(userId: UUID, roomId: UUID): Promise<void> {
+    console.log(`Ensuring participant ${userId} is in room ${roomId}`);
+    await this.agent.ensureParticipantInRoom(userId, roomId);
+  }
+
+  protected async describeImage(imageUrl: string): Promise<string> {
+    const descriptions = await this.imageRecognitionService.recognizeImage(imageUrl);
+    return descriptions[0];
+  }
+
+  protected async saveRequestMessage(message: Message, state: State): Promise<void> {
+    // Implement the logic to save the request message
+    console.log('Saving request message:', message);
+  }
+
+  protected async saveResponseMessage(message: Message, state: State, responseContent: Content): Promise<void> {
+    // Implement the logic to save the response message
+    console.log('Saving response message:', responseContent);
+  }
+
+  protected async sendMessage(message: Message): Promise<void> {
+    console.log('Sending message:', message);
+    if (message.content && typeof message.content.content === 'string') {
+      await this.twitterClient.sendTweet(message.content.content);
+    } else {
+      console.error('Invalid message format for Twitter:', message);
     }
   }
 
-  private async ensureUserExists(userId: UUID, username: string): Promise<void> {
-    // Implement user creation logic here
-    // This might involve calling an API or updating a database
-    console.log(`Ensuring user exists: ${username} (${userId})`);
-    // For now, we'll assume the user exists
+  protected async editMessage(message: Message): Promise<void> {
+    console.warn('Editing messages is not supported on Twitter');
   }
 
-  private async ensureRoomExists(roomId: UUID): Promise<void> {
-    // Implement room creation logic here
-    // This might involve calling an API or updating a database
-    console.log(`Ensuring room exists: ${roomId}`);
-    // For now, we'll assume the room exists
-  }
-
-  private async ensureParticipantInRoom(userId: UUID, roomId: UUID): Promise<void> {
-    // Implement logic to add participant to room
-    // This might involve calling an API or updating a database
-    console.log(`Ensuring participant ${userId} is in room ${roomId}`);
-    // For now, we'll assume the participant is added to the room
-  }
-
-  public async testImageRecognition(imageUrl: string): Promise<string> {
-    try {
-      const description = await this.describeImage(imageUrl);
-      console.log('Image recognition test result:', description);
-      return description;
-    } catch (error) {
-      console.error('Image recognition test failed:', error);
-      throw error;
+  protected async deleteMessage(message: Message): Promise<void> {
+    console.log('Deleting message:', message);
+    if ('id' in message && typeof message.id === 'string') {
+      await this.twitterClient.deleteTweet(message.id);
+    } else {
+      console.error('Cannot delete message without a valid ID:', message);
     }
   }
 }
