@@ -17,7 +17,7 @@
     "@discordjs/opus": "github:discordjs/opus",
     "@discordjs/voice": "^0.17.0",
     "@types/fluent-ffmpeg": "^2.1.24",
-    "@xenova/transformers": "^2.17.2",
+    "@xenova/transformers": "github:xenova/transformers.js#v3",
     "agent-twitter-client": "^0.0.8",
     "better-sqlite3": "^11.1.2",
     "bgent": "^0.1.11",
