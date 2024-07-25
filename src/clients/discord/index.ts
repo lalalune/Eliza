@@ -263,28 +263,17 @@ export class DiscordClient extends EventEmitter {
   }
 
   
-  private async ensureUserExists(agentId: UUID, userName: string, botToken: string | null = null) {
-    if (!userName && botToken) {
-      userName = await this.fetchBotName(botToken);
-    }
-    this.agent.ensureUserExists(agentId, userName);
-  }
+
 
   private async checkBotAccount() {
     const agentId = getUuid(settings.DISCORD_APPLICATION_ID as string) as UUID;
     const room_id = getUuid(this.client.user?.id as string) as UUID;
 
-    await this.ensureUserExists(
-      agentId,
-      await this.fetchBotName(settings.DISCORD_API_TOKEN),
-      settings.DISCORD_API_TOKEN
-    );
-    await this.agent.ensureRoomExists(room_id);
-    await this.agent.ensureParticipantInRoom(agentId, room_id);
+// Removed unnecessary ensureUserExists, ensureRoomExists, and ensureParticipantInRoom method calls
 
-    const botData = adapter.db
-      .prepare("SELECT name FROM accounts WHERE id = ?")
-      .get(agentId) as { name: string };
+const botData = adapter.db
+  .prepare("SELECT name FROM accounts WHERE id = ?")
+  .get(agentId) as { name: string };
 
     if (!botData.name) {
       const botName = await this.fetchBotName(settings.DISCORD_API_TOKEN);
@@ -616,14 +605,6 @@ export class DiscordClient extends EventEmitter {
     const userIdUUID = getUuid(user_id) as UUID;
     const agentId = getUuid(settings.DISCORD_APPLICATION_ID as string) as UUID;
 
-    await this.ensureUserExists(
-      agentId,
-      await this.fetchBotName(settings.DISCORD_API_TOKEN),
-      settings.DISCORD_API_TOKEN
-    );
-    await this.ensureUserExists(userIdUUID, userName);
-    await this.agent.ensureRoomExists(room_id);
-    await this.agent.ensureParticipantInRoom(userIdUUID, room_id);
     await this.agent.ensureParticipantInRoom(agentId, room_id);
 
     const callback = (response: string) => {
@@ -817,15 +798,7 @@ export class DiscordClient extends EventEmitter {
 
     await interaction.deferReply();
 
-    await this.ensureUserExists(
-      agentId,
-      await this.fetchBotName(settings.DISCORD_API_TOKEN),
-      settings.DISCORD_API_TOKEN
-    );
-    await this.ensureUserExists(userIdUUID, userName);
-    await this.agent.ensureRoomExists(room_id);
-    await this.agent.ensureParticipantInRoom(userIdUUID, room_id);
-    await this.agent.ensureParticipantInRoom(agentId, room_id);
+
 
     if (newName) {
       try {
@@ -868,15 +841,7 @@ export class DiscordClient extends EventEmitter {
 
         await interaction.deferReply();
 
-        await this.ensureUserExists(
-          agentId,
-          await this.fetchBotName(settings.DISCORD_API_TOKEN),
-          settings.DISCORD_API_TOKEN
-        );
-        await this.ensureUserExists(userIdUUID, userName);
-        await this.agent.ensureRoomExists(room_id);
-        await this.agent.ensureParticipantInRoom(userIdUUID, room_id);
-        await this.agent.ensureParticipantInRoom(agentId, room_id);
+
 
         adapter.db
           .prepare("UPDATE accounts SET details = ? WHERE id = ?")

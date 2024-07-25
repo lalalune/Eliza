@@ -1,4 +1,4 @@
-import { SearchMode, Tweet } from "agent-twitter-client";
+import { SearchMode, Tweet, Scraper } from "agent-twitter-client";
 import {
   Content,
   Message,
@@ -15,7 +15,8 @@ import settings from "../../core/settings.ts";
 
 import { ClientBase, Character } from "./base";
 import ImageRecognitionService from '../../imageRecognitionService';
-import { TwitterClient } from "../../types/twitter";
+
+
 
 
 export const messageHandlerTemplate =
@@ -81,7 +82,7 @@ IMPORTANT: {{agentName}} is particularly sensitive about being annoying, so if t
 
 export class TwitterInteractionClient extends ClientBase {
   private imageRecognitionService: ImageRecognitionService;
-  private twitterClient: TwitterClient;
+  private twitterClient: Scraper;
   private lastCheckedTweetId: string | null;
   private directions: string;
 
@@ -91,7 +92,7 @@ export class TwitterInteractionClient extends ClientBase {
     if (!('twitterClient' in options.agent)) {
       throw new Error('Twitter client is not initialized in the agent');
     }
-    this.twitterClient = (options.agent as any).twitterClient as TwitterClient;
+    this.twitterClient = (options.agent as any).twitterClient as Scraper;
     this.lastCheckedTweetId = null;
     this.directions = options.character.bio || '';
     this.initializeImageRecognitionService();
@@ -150,17 +151,17 @@ export class TwitterInteractionClient extends ClientBase {
       }
 
       // Check for mentions
-      const mentions = await this.twitterClient.searchTweets(`@${botTwitterUsername}`, 20, SearchMode.Latest);
+      const mentions = await this.fetchAll(this.twitterClient.searchTweets(`@${botTwitterUsername}`, 20, SearchMode.Latest));
       for (const tweet of mentions) {
         if (this.lastCheckedTweetId && tweet.id <= this.lastCheckedTweetId) break;
         await this.handleTweet(tweet);
       }
 
       // Check for replies to the bot's tweets
-      const botTweets = await this.twitterClient.getTweets(botTwitterUsername, 20);
+      const botTweets = await this.fetchAll(this.twitterClient.getTweets(botTwitterUsername, 20));
       for (const tweet of botTweets) {
         if (this.lastCheckedTweetId && tweet.id <= this.lastCheckedTweetId) break;
-        const replies = await this.twitterClient.searchTweets(`to:${botTwitterUsername}`, 20, SearchMode.Latest);
+        const replies = await this.fetchAll(this.twitterClient.searchTweets(`to:${botTwitterUsername}`, 20, SearchMode.Latest));
         for (const reply of replies) {
           if (reply.inReplyToStatusId === tweet.id) {
             await this.handleTweet(reply);
@@ -177,6 +178,14 @@ export class TwitterInteractionClient extends ClientBase {
     } catch (error) {
       console.error('Error handling Twitter interactions:', error);
     }
+  }
+
+  private async fetchAll(generator: AsyncGenerator<any, void, unknown>): Promise<any[]> {
+    const results = [];
+    for await (const value of generator) {
+      results.push(value);
+    }
+    return results;
   }
 
   private async handleTweet(tweet: Tweet) {
@@ -221,7 +230,7 @@ export class TwitterInteractionClient extends ClientBase {
     }
 
     // Fetch replies and retweets
-    const replies = await this.twitterClient.getReplies(tweet.id);
+    const replies = await this.fetchAll(this.twitterClient.getTweetsAndReplies(tweet.username));
     const replyContext = replies
       .filter(reply => reply.username !== botTwitterUsername)
       .map(reply => `@${reply.username}: ${reply.text}`)
@@ -249,7 +258,7 @@ ${tweet.urls.length > 0 ? `URLs: ${tweet.urls.join(', ')}\n` : ''}${imageDescrip
 `
     });
 
-    // Removed saveRequestMessage call as it's not defined in the class
+    this.saveRequestMessage(message, state as State);
 
     if (shouldIgnore) {
       console.log("shouldIgnore", shouldIgnore);
@@ -361,7 +370,7 @@ ${tweet.urls.length > 0 ? `URLs: ${tweet.urls.join(', ')}\n` : ''}${imageDescrip
       };
     }
 
-    // Removed saveResponseMessage call as it's not defined in the class
+    this.saveResponseMessage(message, state, responseContent);
     this.agent.runtime.processActions(message, responseContent, state);
 
     const response = responseContent;
