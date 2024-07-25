@@ -44,6 +44,7 @@ import { AudioMonitor } from "./audioMonitor.ts";
 import { commands } from "./commands.ts";
 import { shouldRespondTemplate } from "./prompts.ts";
 import { InterestChannels, ResponseType } from "./types.ts";
+import ImageRecognitionService from '../../imageRecognitionService';
 
 // These values are chosen for compatibility with picovoice components
 const DECODE_FRAME_SIZE = 1024;
@@ -57,6 +58,7 @@ export class DiscordClient extends EventEmitter {
   private agent: Agent;
   private bio: string;
   private transcriber: any;
+  private imageRecognitionService: ImageRecognitionService;
 
   constructor(agent: Agent, bio: string) {
     super();
@@ -78,6 +80,8 @@ export class DiscordClient extends EventEmitter {
     this.agent = agent;
 
     this.initializeTranscriber();
+    this.imageRecognitionService = new ImageRecognitionService();
+    this.imageRecognitionService.initialize();
 
     this.client.once(Events.ClientReady, async (readyClient: { user: { tag: any; id: any } }) => {
       console.log(`Logged in as ${readyClient.user?.tag}`);
@@ -166,6 +170,12 @@ export class DiscordClient extends EventEmitter {
     const userName = message.author.username;
     const channelId = message.channel.id;
     const textContent = message.content;
+
+    // Check for image attachments
+    if (message.attachments.size > 0) {
+      await this.handleImageRecognition(message);
+      return;
+    }
 
     try {
       const responseStream = await this.respondToText({
@@ -932,6 +942,19 @@ export class DiscordClient extends EventEmitter {
     } catch (error) {
       console.error("Error leaving voice channel:", error);
       await interaction.reply("Failed to leave the voice channel.");
+    }
+  }
+
+  private async handleImageRecognition(message: DiscordMessage) {
+    const attachment = message.attachments.first();
+    if (attachment && attachment.contentType?.startsWith('image/')) {
+      try {
+        const description = await this.imageRecognitionService.recognizeImage(attachment.url);
+        await message.reply(`Image description: ${description[0]}`);
+      } catch (error) {
+        console.error('Error recognizing image:', error);
+        await message.reply('Sorry, I encountered an error while processing the image.');
+      }
     }
   }
 }
