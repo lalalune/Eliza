@@ -14,7 +14,7 @@ import { adapter } from "../../core/db.ts";
 import settings from "../../core/settings.ts";
 
 import { ClientBase, Character } from "./base";
-import ImageRecognitionService from '../../imageRecognitionService';
+import ImageRecognitionService from '../../imageRecognitionService.ts';
 
 export const messageHandlerTemplate =
 `{{relevantFacts}}

@@ -44,7 +44,7 @@ import { AudioMonitor } from "./audioMonitor.ts";
 import { commands } from "./commands.ts";
 import { shouldRespondTemplate } from "./prompts.ts";
 import { InterestChannels, ResponseType } from "./types.ts";
-import ImageRecognitionService from '../../imageRecognitionService';
+import ImageRecognitionService from '../../imageRecognitionService.ts';
 
 // These values are chosen for compatibility with picovoice components
 const DECODE_FRAME_SIZE = 1024;
